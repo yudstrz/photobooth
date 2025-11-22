@@ -7,153 +7,157 @@ import av
 import numpy as np
 import uuid
 import io
+import time
 
 # --- KONFIGURASI & KONSTANTA ---
-# GANTI DENGAN SERVER KEY & CLIENT KEY MIDTRANS SANDBOX ANDA
 MIDTRANS_SERVER_KEY = 'Mid-server-FcYKPYk-LPZ348PE3inpCkrk'
 MIDTRANS_CLIENT_KEY = 'Mid-client-rawLodn_Eyclj7vW'
-PRICE_IDR = 5000  # Harga foto
+PRICE_IDR = 5000
 
 st.set_page_config(page_title="Self-Service Photobooth", page_icon="📸", layout="wide")
 
 # --- TEMPLATE DEFINITIONS ---
 TEMPLATES = {
-    "classic": {
-        "name": "🎨 Classic",
-        "description": "Frame klasik dengan border putih",
-        "color": (255, 255, 255),
-        "border_width": 30
+    "2x2": {
+        "name": "📸 2x2 Classic",
+        "description": "4 foto dalam layout 2x2",
+        "grid": (2, 2),
+        "photo_size": (400, 400),
+        "spacing": 20,
+        "border": 30,
+        "bg_color": (255, 255, 255)
     },
-    "polaroid": {
-        "name": "📷 Polaroid",
-        "description": "Style polaroid vintage",
-        "color": (245, 245, 220),
-        "border_width": 40,
-        "bottom_extra": 80
+    "3x3": {
+        "name": "🎨 3x3 Grid",
+        "description": "9 foto dalam layout 3x3",
+        "grid": (3, 3),
+        "photo_size": (300, 300),
+        "spacing": 15,
+        "border": 25,
+        "bg_color": (240, 240, 240)
     },
-    "neon": {
-        "name": "✨ Neon",
-        "description": "Border neon warna-warni",
-        "color": (255, 20, 147),
-        "border_width": 25,
-        "gradient": True
+    "4x4": {
+        "name": "✨ 4x4 Mega",
+        "description": "16 foto dalam layout 4x4",
+        "grid": (4, 4),
+        "photo_size": (250, 250),
+        "spacing": 10,
+        "border": 20,
+        "bg_color": (250, 250, 250)
     },
-    "minimalist": {
-        "name": "⬜ Minimalist",
-        "description": "Border tipis minimalis",
-        "color": (240, 240, 240),
-        "border_width": 15
+    "2x3": {
+        "name": "📷 2x3 Portrait",
+        "description": "6 foto dalam layout 2x3 vertikal",
+        "grid": (2, 3),
+        "photo_size": (350, 350),
+        "spacing": 15,
+        "border": 25,
+        "bg_color": (255, 248, 240)
     },
-    "party": {
-        "name": "🎉 Party",
-        "description": "Frame pesta dengan confetti",
-        "color": (255, 215, 0),
-        "border_width": 35,
-        "decorations": True
+    "3x2": {
+        "name": "🌅 3x2 Landscape",
+        "description": "6 foto dalam layout 3x2 horizontal",
+        "grid": (3, 2),
+        "photo_size": (350, 350),
+        "spacing": 15,
+        "border": 25,
+        "bg_color": (240, 248, 255)
     },
-    "romantic": {
-        "name": "💕 Romantic",
-        "description": "Frame romantic pink",
-        "color": (255, 192, 203),
-        "border_width": 30,
-        "hearts": True
+    "strip": {
+        "name": "🎞️ Film Strip",
+        "description": "4 foto dalam strip vertikal",
+        "grid": (1, 4),
+        "photo_size": (400, 300),
+        "spacing": 10,
+        "border": 20,
+        "bg_color": (0, 0, 0),
+        "text_color": (255, 255, 255)
     }
 }
 
 # --- STATE MANAGEMENT ---
 if 'step' not in st.session_state:
     st.session_state.step = 'template_select'
-if 'captured_image' not in st.session_state:
-    st.session_state.captured_image = None
+if 'captured_images' not in st.session_state:
+    st.session_state.captured_images = []
 if 'order_id' not in st.session_state:
     st.session_state.order_id = None
 if 'payment_url' not in st.session_state:
     st.session_state.payment_url = None
 if 'selected_template' not in st.session_state:
-    st.session_state.selected_template = 'classic'
+    st.session_state.selected_template = '2x2'
+if 'countdown' not in st.session_state:
+    st.session_state.countdown = 0
 
 # --- UTILS: TEMPLATE PROCESSING ---
-def apply_template(image_pil, template_key):
-    """Menerapkan template/frame pada foto."""
+def create_photobooth_grid(images, template_key):
+    """Membuat grid photobooth dari list gambar."""
     template = TEMPLATES[template_key]
+    rows, cols = template['grid']
+    photo_width, photo_height = template['photo_size']
+    spacing = template['spacing']
+    border = template['border']
+    bg_color = template['bg_color']
     
-    # Setup
-    border_width = template['border_width']
-    bottom_extra = template.get('bottom_extra', 0)
+    # Calculate canvas size
+    canvas_width = (photo_width * cols) + (spacing * (cols - 1)) + (border * 2)
+    canvas_height = (photo_height * rows) + (spacing * (rows - 1)) + (border * 2)
     
-    # Calculate new size
-    new_width = image_pil.width + (border_width * 2)
-    new_height = image_pil.height + (border_width * 2) + bottom_extra
+    # Create canvas
+    canvas = Image.new('RGB', (canvas_width, canvas_height), bg_color)
     
-    # Create base with border color
-    if template.get('gradient'):
-        # Create gradient background
-        base = Image.new('RGB', (new_width, new_height))
-        draw = ImageDraw.Draw(base)
-        for i in range(new_height):
-            r = int(255 * (1 - i/new_height) + 20 * (i/new_height))
-            g = int(20 * (1 - i/new_height) + 147 * (i/new_height))
-            b = int(147 * (1 - i/new_height) + 255 * (i/new_height))
-            draw.rectangle([(0, i), (new_width, i+1)], fill=(r, g, b))
-    else:
-        base = Image.new('RGB', (new_width, new_height), template['color'])
+    # Paste images in grid
+    total_photos = rows * cols
+    for idx in range(total_photos):
+        if idx < len(images):
+            img = images[idx].copy()
+        else:
+            # Use last image if we don't have enough
+            img = images[-1].copy() if images else Image.new('RGB', template['photo_size'], (200, 200, 200))
+        
+        # Resize to fit
+        img.thumbnail(template['photo_size'], Image.Resampling.LANCZOS)
+        
+        # Calculate position
+        row = idx // cols
+        col = idx % cols
+        
+        x = border + (col * (photo_width + spacing))
+        y = border + (row * (photo_height + spacing))
+        
+        # Paste image
+        canvas.paste(img, (x, y))
     
-    # Paste photo
-    base.paste(image_pil, (border_width, border_width))
+    # Add decorative elements
+    draw = ImageDraw.Draw(canvas)
     
-    # Add decorations
-    draw = ImageDraw.Draw(base)
-    
-    if template.get('decorations'):
-        # Add confetti dots
-        for _ in range(50):
-            x = np.random.randint(0, new_width)
-            y = np.random.randint(0, new_height)
-            size = np.random.randint(3, 8)
-            color = tuple(np.random.randint(0, 255, 3).tolist())
-            draw.ellipse([x, y, x+size, y+size], fill=color)
-    
-    if template.get('hearts'):
-        # Add corner hearts
+    # Add date/time stamp for film strip
+    if template_key == 'strip':
         try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
-        except:
-            font = ImageFont.load_default()
-        for pos in [(10, 10), (new_width-40, 10), (10, new_height-40), (new_width-40, new_height-40)]:
-            draw.text(pos, "💕", font=font, fill=(255, 105, 180))
-    
-    # Add text for polaroid style
-    if template_key == 'polaroid':
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
         except:
             font = ImageFont.load_default()
         
-        text = "Photobooth Memories ✨"
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_x = (new_width - text_width) // 2
-        text_y = new_height - bottom_extra + 20
-        draw.text((text_x, text_y), text, fill=(100, 100, 100), font=font)
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        text_color = template.get('text_color', (255, 255, 255))
+        draw.text((border, canvas_height - border + 5), f"📸 {timestamp}", fill=text_color, font=font)
     
-    return base
+    return canvas
 
 def add_watermark(image_pil, text="UNPAID PREVIEW"):
-    """Menambahkan watermark silang pada gambar untuk preview sebelum bayar."""
+    """Menambahkan watermark pada gambar untuk preview sebelum bayar."""
     watermarked = image_pil.copy().convert("RGBA")
     width, height = watermarked.size
     
-    # Membuat layer transparan untuk text
     txt_layer = Image.new('RGBA', watermarked.size, (255, 255, 255, 0))
     draw = ImageDraw.Draw(txt_layer)
     
-    # Load font
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
     except:
         font = ImageFont.load_default()
 
-    # Gambar text watermark di tengah
     bbox = draw.textbbox((0, 0), text, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
@@ -161,7 +165,6 @@ def add_watermark(image_pil, text="UNPAID PREVIEW"):
     x = (width - text_width) / 2
     y = (height - text_height) / 2
     
-    # Warna merah semi-transparan
     draw.text((x, y), text, fill=(255, 0, 0, 180), font=font)
     
     return Image.alpha_composite(watermarked, txt_layer).convert("RGB")
@@ -215,7 +218,6 @@ def check_payment_status(order_id):
         transaction_status = status_response.get('transaction_status', '')
         fraud_status = status_response.get('fraud_status', '')
         
-        # Logika settlement Midtrans
         if transaction_status == 'capture':
             if fraud_status == 'challenge':
                 return 'pending'
@@ -239,9 +241,7 @@ class VideoTransformer(VideoTransformerBase):
 
     def transform(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        # Flip horizontal untuk efek mirror (seperti kamera depan HP)
         img_flipped = cv2.flip(img, 1)
-        # Simpan frame yang sudah di-flip untuk capture
         self.last_frame = img_flipped
         return av.VideoFrame.from_ndarray(img_flipped, format="bgr24")
 
@@ -249,122 +249,183 @@ class VideoTransformer(VideoTransformerBase):
 st.title("📸 Photobooth Self-Service")
 st.markdown("---")
 
-# SIDEBAR DEBUG
+# SIDEBAR
 with st.sidebar:
-    st.header("Debug Panel")
-    st.write(f"Current Step: **{st.session_state.step}**")
-    st.write(f"Template: **{st.session_state.selected_template}**")
-    if st.button("Reset Aplikasi"):
-        st.session_state.step = 'template_select'
-        st.session_state.captured_image = None
-        st.session_state.order_id = None
-        st.session_state.payment_url = None
-        st.session_state.selected_template = 'classic'
+    st.header("📋 Info Session")
+    st.write(f"**Step:** {st.session_state.step}")
+    st.write(f"**Template:** {st.session_state.selected_template}")
+    st.write(f"**Foto diambil:** {len(st.session_state.captured_images)}")
+    
+    if st.session_state.selected_template in TEMPLATES:
+        template = TEMPLATES[st.session_state.selected_template]
+        total_needed = template['grid'][0] * template['grid'][1]
+        st.progress(len(st.session_state.captured_images) / total_needed)
+        st.caption(f"{len(st.session_state.captured_images)}/{total_needed} foto")
+    
+    st.markdown("---")
+    if st.button("🔄 Reset Aplikasi"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
         st.rerun()
 
 # ===========================
 # STEP 0: TEMPLATE SELECTION
 # ===========================
 if st.session_state.step == 'template_select':
-    st.subheader("🎨 Pilih Template Frame")
-    st.write("Pilih template frame untuk foto Anda:")
+    st.subheader("🎨 Pilih Layout Photobooth")
+    st.write("Pilih berapa banyak foto yang ingin Anda ambil:")
     
-    # Display templates in grid
     cols = st.columns(3)
     for idx, (key, template) in enumerate(TEMPLATES.items()):
         with cols[idx % 3]:
             st.markdown(f"### {template['name']}")
             st.caption(template['description'])
             
-            # Create sample preview
-            sample = Image.new('RGB', (200, 200), (200, 200, 200))
-            sample_with_frame = apply_template(sample, key)
-            sample_with_frame.thumbnail((300, 300))
-            st.image(sample_with_frame, use_container_width=True)
+            rows, cols_grid = template['grid']
+            total_photos = rows * cols_grid
+            st.info(f"📸 Total: **{total_photos} foto**")
             
-            if st.button(f"Pilih {template['name']}", key=f"select_{key}", use_container_width=True):
+            # Create sample preview
+            sample_size = template['photo_size']
+            sample = Image.new('RGB', sample_size, (180, 180, 180))
+            draw = ImageDraw.Draw(sample)
+            
+            # Draw sample face
+            center_x, center_y = sample_size[0]//2, sample_size[1]//2
+            draw.ellipse([center_x-30, center_y-30, center_x+30, center_y+30], fill=(255, 220, 180))
+            draw.ellipse([center_x-15, center_y-10, center_x-5, center_y], fill=(50, 50, 50))
+            draw.ellipse([center_x+5, center_y-10, center_x+15, center_y], fill=(50, 50, 50))
+            draw.arc([center_x-20, center_y, center_x+20, center_y+20], 0, 180, fill=(200, 100, 100), width=3)
+            
+            samples = [sample.copy() for _ in range(total_photos)]
+            preview = create_photobooth_grid(samples, key)
+            preview.thumbnail((300, 400))
+            st.image(preview, use_container_width=True)
+            
+            if st.button(f"Pilih Layout Ini", key=f"select_{key}", use_container_width=True, type="primary"):
                 st.session_state.selected_template = key
+                st.session_state.captured_images = []
                 st.session_state.step = 'capture'
                 st.rerun()
 
 # ===========================
-# STEP 1: LIVE BOOTH & CAPTURE
+# STEP 1: CAPTURE MULTIPLE PHOTOS
 # ===========================
 elif st.session_state.step == 'capture':
-    st.subheader("Step 1: Pose & Capture")
-    
-    # Show selected template
     template = TEMPLATES[st.session_state.selected_template]
-    st.info(f"Template terpilih: **{template['name']}** - {template['description']}")
+    rows, cols = template['grid']
+    total_needed = rows * cols
+    current_count = len(st.session_state.captured_images)
+    
+    st.subheader(f"📸 Sesi Pemotretan - {template['name']}")
     
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        # Setup WebRTC Streamer
-        ctx = webrtc_streamer(
-            key="photobooth", 
-            video_processor_factory=VideoTransformer,
-            mode=WebRtcMode.SENDRECV,
-            rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-            media_stream_constraints={"video": True, "audio": False},
-            async_processing=True,
-        )
+        # Progress bar
+        progress = current_count / total_needed
+        st.progress(progress)
+        st.write(f"**Foto {current_count + 1} dari {total_needed}**")
+        
+        if current_count < total_needed:
+            # Setup WebRTC
+            ctx = webrtc_streamer(
+                key="photobooth", 
+                video_processor_factory=VideoTransformer,
+                mode=WebRtcMode.SENDRECV,
+                rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+                media_stream_constraints={"video": True, "audio": False},
+                async_processing=True,
+            )
 
-        if ctx.video_processor:
-            if st.button("📸 Ambil Foto", type="primary", use_container_width=True):
-                if hasattr(ctx.video_processor, 'last_frame') and ctx.video_processor.last_frame is not None:
-                    img = ctx.video_processor.last_frame
-                    st.session_state.captured_image = convert_cv2_to_pil(img)
-                    st.session_state.step = 'preview'
-                    st.rerun()
-                else:
-                    st.warning("Tunggu sampai kamera siap...")
+            # Countdown display
+            if st.session_state.countdown > 0:
+                st.markdown(f"<h1 style='text-align: center; color: red; font-size: 100px;'>{st.session_state.countdown}</h1>", unsafe_allow_html=True)
+                time.sleep(1)
+                st.session_state.countdown -= 1
+                st.rerun()
+
+            col_capture, col_skip = st.columns(2)
+            
+            with col_capture:
+                if st.button("📸 Ambil Foto", type="primary", use_container_width=True):
+                    if ctx.video_processor and hasattr(ctx.video_processor, 'last_frame') and ctx.video_processor.last_frame is not None:
+                        img = ctx.video_processor.last_frame
+                        pil_img = convert_cv2_to_pil(img)
+                        st.session_state.captured_images.append(pil_img)
+                        
+                        if len(st.session_state.captured_images) >= total_needed:
+                            st.session_state.step = 'preview'
+                        st.rerun()
+                    else:
+                        st.warning("Tunggu sampai kamera siap...")
+            
+            with col_skip:
+                if current_count > 0:
+                    if st.button("⏭️ Lanjut Preview", use_container_width=True):
+                        st.session_state.step = 'preview'
+                        st.rerun()
     
     with col2:
-        st.write("**Tips:**")
-        st.write("✓ Pastikan pencahayaan cukup")
-        st.write("✓ Posisikan wajah di tengah")
-        st.write("✓ Berikan senyum terbaik!")
+        st.write("**Tips Pose:**")
+        poses = ["😊 Senyum natural", "🤪 Ekspresi lucu", "😎 Cool pose", "🤗 Peace sign", 
+                 "🥰 Cute pose", "😂 Tertawa lepas", "🤔 Thinking pose", "✌️ Victory"]
+        
+        if current_count < len(poses):
+            st.success(f"Pose #{current_count + 1}")
+            st.write(f"**{poses[current_count]}**")
+        
+        st.markdown("---")
+        
+        # Show thumbnails
+        if st.session_state.captured_images:
+            st.write("**Foto Terkumpul:**")
+            thumb_cols = st.columns(2)
+            for i, img in enumerate(st.session_state.captured_images):
+                with thumb_cols[i % 2]:
+                    st.image(img, caption=f"Foto {i+1}", use_container_width=True)
         
         if st.button("⬅️ Ganti Template"):
             st.session_state.step = 'template_select'
+            st.session_state.captured_images = []
             st.rerun()
 
 # ===========================
-# STEP 2 & 3: PREVIEW & PAYMENT
+# STEP 2: PREVIEW & PAYMENT
 # ===========================
 elif st.session_state.step == 'preview':
     col1, col2 = st.columns([3, 2])
     
     with col1:
-        st.subheader("Preview Foto")
+        st.subheader("🖼️ Preview Hasil Photobooth")
         
-        # Apply template to captured image
-        templated_image = apply_template(st.session_state.captured_image, st.session_state.selected_template)
+        # Create grid
+        grid_image = create_photobooth_grid(st.session_state.captured_images, st.session_state.selected_template)
         
         # Add watermark
-        watermarked_img = add_watermark(templated_image)
-        st.image(watermarked_img, caption="Preview (Watermarked)", use_container_width=True)
+        watermarked = add_watermark(grid_image)
+        st.image(watermarked, caption="Preview (Watermarked)", use_container_width=True)
         
-        col_retake, col_template = st.columns(2)
+        col_retake, col_back = st.columns(2)
         with col_retake:
-            if st.button("🔄 Foto Ulang"):
+            if st.button("📸 Foto Ulang Semua"):
                 st.session_state.step = 'capture'
+                st.session_state.captured_images = []
                 st.session_state.payment_url = None
                 st.rerun()
-        with col_template:
+        with col_back:
             if st.button("🎨 Ganti Template"):
                 st.session_state.step = 'template_select'
+                st.session_state.captured_images = []
                 st.session_state.payment_url = None
                 st.rerun()
 
     with col2:
-        st.subheader("Pembayaran")
+        st.subheader("💳 Pembayaran")
         template = TEMPLATES[st.session_state.selected_template]
-        st.success(f"Template: **{template['name']}**")
+        st.success(f"Layout: **{template['name']}**")
         st.info(f"Total Biaya: **Rp {PRICE_IDR:,}**")
         
-        # Generate Transaction jika belum ada
         if st.session_state.payment_url is None:
             if st.button("💳 Bayar via QRIS", type="primary", use_container_width=True):
                 new_order_id = f"ORDER-{uuid.uuid4().hex[:8]}"
@@ -375,20 +436,15 @@ elif st.session_state.step == 'preview':
                     if url:
                         st.session_state.payment_url = url
                         st.rerun()
-        
-        # Tampilkan Interface Pembayaran
         else:
             st.success("Order ID Terbuat!")
             st.code(st.session_state.order_id)
             
             st.link_button("🔗 Buka Halaman Pembayaran (QRIS)", st.session_state.payment_url, use_container_width=True)
-            
-            st.caption("Scan QRIS pada link di atas, lalu klik tombol Cek Status di bawah.")
+            st.caption("Scan QRIS pada link di atas, lalu klik tombol Cek Status.")
             
             st.markdown("---")
-            check_btn = st.button("✅ Cek Status Pembayaran", type="primary", use_container_width=True)
-            
-            if check_btn:
+            if st.button("✅ Cek Status Pembayaran", type="primary", use_container_width=True):
                 with st.spinner("Memeriksa status pembayaran..."):
                     status = check_payment_status(st.session_state.order_id)
                     if status == 'success':
@@ -396,41 +452,40 @@ elif st.session_state.step == 'preview':
                         st.session_state.step = 'paid'
                         st.rerun()
                     elif status == 'pending':
-                        st.warning("Pembayaran belum terdeteksi. Silakan selesaikan pembayaran.")
+                        st.warning("Pembayaran belum terdeteksi.")
                     else:
                         st.error("Pembayaran Gagal atau Kadaluarsa.")
 
 # ===========================
-# STEP 4: UNLOCK & DOWNLOAD
+# STEP 3: DOWNLOAD
 # ===========================
 elif st.session_state.step == 'paid':
     st.subheader("🎉 Pembayaran Berhasil!")
     
-    # Apply template to final image
-    final_image = apply_template(st.session_state.captured_image, st.session_state.selected_template)
+    # Create final grid
+    final_grid = create_photobooth_grid(st.session_state.captured_images, st.session_state.selected_template)
     
-    # Tampilkan foto asli dengan template
-    st.image(final_image, caption="Hasil Foto Anda (Clean)", use_container_width=True)
+    st.image(final_grid, caption="Hasil Photobooth Anda", use_container_width=True)
     
-    # Siapkan buffer untuk download
+    # Prepare download
     buf = io.BytesIO()
-    final_image.save(buf, format="JPEG", quality=95)
+    final_grid.save(buf, format="JPEG", quality=95)
     byte_im = buf.getvalue()
     
     col_dl, col_new = st.columns(2)
     with col_dl:
         st.download_button(
-            label="⬇️ Download Foto JPEG",
+            label="⬇️ Download Foto",
             data=byte_im,
-            file_name=f"photobooth_{st.session_state.selected_template}.jpg",
+            file_name=f"photobooth_{st.session_state.selected_template}_{st.session_state.order_id}.jpg",
             mime="image/jpeg",
             type="primary",
             use_container_width=True
         )
     with col_new:
-        if st.button("🏠 Foto Baru", use_container_width=True):
+        if st.button("🔄 Foto Baru", use_container_width=True):
             st.session_state.step = 'template_select'
-            st.session_state.captured_image = None
+            st.session_state.captured_images = []
             st.session_state.order_id = None
             st.session_state.payment_url = None
             st.rerun()
