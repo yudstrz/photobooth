@@ -5,7 +5,6 @@ import numpy as np
 import uuid
 import io
 from datetime import datetime
-from streamlit_camera_input_live import camera_input_live
 
 # --- KONFIGURASI & KONSTANTA ---
 MIDTRANS_SERVER_KEY = 'Mid-server-FcYKPYk-LPZ348PE3inpCkrk'
@@ -337,31 +336,43 @@ elif st.session_state.step == 'capture':
         
         if current_count < total_needed:
             st.info(f"📸 Ambil foto #{current_count + 1} dari {total_needed}")
+            st.write("**Klik tombol camera di bawah untuk ambil foto**")
             
-            # Camera input with live preview
-            image_data = camera_input_live(key=f"camera_{st.session_state.camera_key}")
+            # Native Streamlit camera input
+            camera_photo = st.camera_input(
+                f"📷 Foto #{current_count + 1}", 
+                key=f"camera_{st.session_state.camera_key}"
+            )
             
-            if image_data is not None:
+            if camera_photo is not None:
                 try:
                     # Process captured image
-                    processed_image = process_camera_image(image_data)
+                    image = Image.open(camera_photo)
                     
-                    if processed_image:
-                        st.session_state.captured_images.append(processed_image)
-                        st.session_state.camera_key += 1
-                        st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
+                    # MIRROR: Flip horizontal untuk konsisten dengan preview
+                    image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                    
+                    # Resize if too large
+                    max_size = (1920, 1920)
+                    image.thumbnail(max_size, Image.Resampling.LANCZOS)
+                    
+                    # Save to session
+                    st.session_state.captured_images.append(image)
+                    st.session_state.camera_key += 1
+                    
+                    st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
+                    
+                    # Show preview
+                    with st.expander("👁️ Lihat preview foto ini"):
+                        st.image(image, caption=f"Foto #{len(st.session_state.captured_images)}", width=300)
+                    
+                    if len(st.session_state.captured_images) >= total_needed:
+                        st.balloons()
+                        st.session_state.step = 'preview'
+                        st.rerun()
+                    else:
+                        st.info(f"✨ Siap untuk foto berikutnya! ({total_needed - len(st.session_state.captured_images)} foto lagi)")
                         
-                        # Show preview
-                        st.image(processed_image, caption=f"Foto #{len(st.session_state.captured_images)}", width=300)
-                        
-                        if len(st.session_state.captured_images) >= total_needed:
-                            st.balloons()
-                            st.session_state.step = 'preview'
-                            st.rerun()
-                        else:
-                            st.info(f"Siap untuk foto berikutnya!")
-                            st.rerun()
-                            
                 except Exception as e:
                     st.error(f"Error memproses foto: {e}")
             
