@@ -251,6 +251,23 @@ def check_payment_status(order_id):
 st.title("📸 Photobooth Self-Service")
 st.markdown("---")
 
+# CSS untuk mirror effect pada camera preview
+st.markdown("""
+<style>
+    /* Mirror effect untuk video camera preview */
+    video {
+        -webkit-transform: scaleX(-1);
+        transform: scaleX(-1);
+    }
+    
+    /* Jangan mirror hasil foto yang sudah diambil */
+    img {
+        -webkit-transform: none !important;
+        transform: none !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # SIDEBAR
 with st.sidebar:
     st.header("📋 Info Session")
