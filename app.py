@@ -185,41 +185,58 @@ def process_camera_image(uploaded_file):
         return image
     return None
 
-def camera_input_component():
+def camera_input_component(key):
     """HTML5 Camera Component with mirror effect"""
-    html_code = """
+    html_code = f"""
     <div style="text-align: center;">
         <video id="video" width="640" height="480" autoplay style="transform: scaleX(-1); border: 2px solid #ddd; border-radius: 10px;"></video>
         <br><br>
         <button onclick="takePhoto()" style="padding: 15px 30px; font-size: 18px; background: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer;">📸 Ambil Foto</button>
         <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+        <input type="file" id="fileInput" accept="image/*" capture="user" style="display:none;" onchange="handleFile(this)">
     </div>
     
     <script>
         const video = document.getElementById('video');
         const canvas = document.getElementById('canvas');
         const context = canvas.getContext('2d');
+        const fileInput = document.getElementById('fileInput');
         
         // Access camera
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
+        navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: 'user' }} }})
+            .then(stream => {{
                 video.srcObject = stream;
-            })
-            .catch(err => {
+            }})
+            .catch(err => {{
                 console.error("Error accessing camera:", err);
-            });
+                // Fallback to file input if camera fails
+                fileInput.style.display = 'block';
+            }});
         
-        function takePhoto() {
+        function takePhoto() {{
             // Draw image normally first
             context.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // Convert to base64 and send to Streamlit
-            const imageData = canvas.toDataURL('image/jpeg');
-            window.parent.postMessage({
-                type: 'streamlit:setComponentValue',
-                value: imageData
-            }, '*');
-        }
+            // Convert to blob and trigger download to simulate capture
+            canvas.toBlob(function(blob) {{
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'photo_{key}.jpg';
+                a.click();
+                URL.revokeObjectURL(url);
+            }}, 'image/jpeg');
+        }}
+        
+        function handleFile(input) {{
+            if (input.files && input.files[0]) {{
+                const reader = new FileReader();
+                reader.onload = function(e) {{
+                    // Send to Streamlit (if needed)
+                }};
+                reader.readAsDataURL(input.files[0]);
+            }}
+        }}
     </script>
     """
     return components.html(html_code, height=600)
@@ -373,31 +390,45 @@ elif st.session_state.step == 'capture':
         st.write(f"**Foto {current_count + 1} dari {total_needed}**")
         
         if current_count < total_needed:
-            st.info("📸 Klik tombol 'Ambil Foto' pada kamera di bawah")
+            st.info("📸 Ambil foto dengan salah satu cara:")
             
-            # Display camera component
-            photo_data = camera_input_component()
+            # Tab untuk memilih mode
+            tab1, tab2 = st.tabs(["📷 Kamera Live", "📁 Upload Foto"])
             
-            # Check if new photo data received
-            if photo_data and photo_data != st.session_state.last_photo_data:
-                try:
-                    # Decode base64 image
-                    image_data = photo_data.split(',')[1]
-                    image_bytes = base64.b64decode(image_data)
-                    image = Image.open(io.BytesIO(image_bytes))
-                    
-                    # MIRROR: Flip horizontal untuk konsisten dengan preview
-                    image = image.transpose(Image.FLIP_LEFT_RIGHT)
-                    
-                    st.session_state.captured_images.append(image)
-                    st.session_state.last_photo_data = photo_data
-                    st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
-                    
-                    if len(st.session_state.captured_images) >= total_needed:
-                        st.session_state.step = 'preview'
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error memproses foto: {e}")
+            with tab1:
+                st.write("Klik tombol 'Ambil Foto' di bawah ini:")
+                # Display camera component
+                camera_input_component(st.session_state.camera_key)
+                st.caption("⚠️ Jika kamera tidak muncul, gunakan tab 'Upload Foto'")
+            
+            with tab2:
+                uploaded_file = st.file_uploader(
+                    f"Upload foto #{current_count + 1}", 
+                    type=['jpg', 'jpeg', 'png'],
+                    key=f"upload_{st.session_state.camera_key}"
+                )
+                
+                if uploaded_file is not None:
+                    try:
+                        # Process uploaded image
+                        image = Image.open(uploaded_file)
+                        
+                        # MIRROR: Flip horizontal untuk konsisten dengan preview
+                        image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                        
+                        # Resize if too large
+                        max_size = (1920, 1920)
+                        image.thumbnail(max_size, Image.Resampling.LANCZOS)
+                        
+                        st.session_state.captured_images.append(image)
+                        st.session_state.camera_key += 1
+                        st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
+                        
+                        if len(st.session_state.captured_images) >= total_needed:
+                            st.session_state.step = 'preview'
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error memproses foto: {e}")
             
             if current_count > 0:
                 st.markdown("---")
@@ -504,7 +535,7 @@ elif st.session_state.step == 'paid':
     # Create final grid
     final_grid = create_photobooth_grid(st.session_state.captured_images, st.session_state.selected_template)
     
-    st.image(final_grid, caption="Hasil Photobooth Anda", use_container_width=True)
+    st.image(final_grid, caption="Hasil Photobooth Anda", width='stretch')
     
     # Prepare download
     buf = io.BytesIO()
@@ -519,10 +550,10 @@ elif st.session_state.step == 'paid':
             file_name=f"photobooth_{st.session_state.selected_template}_{st.session_state.order_id}.jpg",
             mime="image/jpeg",
             type="primary",
-            use_container_width=True
+            width='stretch'
         )
     with col_new:
-        if st.button("🔄 Foto Baru", use_container_width=True):
+        if st.button("🔄 Foto Baru", width='stretch'):
             st.session_state.step = 'template_select'
             st.session_state.captured_images = []
             st.session_state.order_id = None
