@@ -4,3 +4,4 @@ midtrans-client
 Pillow
 opencv-python-headless
 av
+numpy
