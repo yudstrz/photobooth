@@ -6,6 +6,7 @@ import uuid
 import io
 from datetime import datetime
 import streamlit.components.v1 as components
+import base64
 
 # --- KONFIGURASI & KONSTANTA ---
 MIDTRANS_SERVER_KEY = 'Mid-server-FcYKPYk-LPZ348PE3inpCkrk'
@@ -88,6 +89,8 @@ if 'countdown' not in st.session_state:
     st.session_state.countdown = 0
 if 'camera_key' not in st.session_state:
     st.session_state.camera_key = 0
+if 'last_photo_data' not in st.session_state:
+    st.session_state.last_photo_data = None
 
 # --- UTILS: TEMPLATE PROCESSING ---
 def create_photobooth_grid(images, template_key):
@@ -301,8 +304,13 @@ with st.sidebar:
     
     st.markdown("---")
     if st.button("🔄 Reset Aplikasi"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
+        st.session_state.step = 'template_select'
+        st.session_state.captured_images = []
+        st.session_state.order_id = None
+        st.session_state.payment_url = None
+        st.session_state.selected_template = '2x2'
+        st.session_state.camera_key = 0
+        st.session_state.last_photo_data = None
         st.rerun()
 
 # ===========================
@@ -370,10 +378,10 @@ elif st.session_state.step == 'capture':
             # Display camera component
             photo_data = camera_input_component()
             
-            if photo_data:
+            # Check if new photo data received
+            if photo_data and photo_data != st.session_state.last_photo_data:
                 try:
                     # Decode base64 image
-                    import base64
                     image_data = photo_data.split(',')[1]
                     image_bytes = base64.b64decode(image_data)
                     image = Image.open(io.BytesIO(image_bytes))
@@ -382,17 +390,18 @@ elif st.session_state.step == 'capture':
                     image = image.transpose(Image.FLIP_LEFT_RIGHT)
                     
                     st.session_state.captured_images.append(image)
+                    st.session_state.last_photo_data = photo_data
                     st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
                     
                     if len(st.session_state.captured_images) >= total_needed:
                         st.session_state.step = 'preview'
-                        st.rerun()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error memproses foto: {e}")
             
             if current_count > 0:
                 st.markdown("---")
-                if st.button("⏭️ Lanjut ke Preview", use_container_width=True):
+                if st.button("⏭️ Lanjut ke Preview", width='stretch'):
                     st.session_state.step = 'preview'
                     st.rerun()
     
@@ -413,7 +422,7 @@ elif st.session_state.step == 'capture':
             thumb_cols = st.columns(2)
             for i, img in enumerate(st.session_state.captured_images):
                 with thumb_cols[i % 2]:
-                    st.image(img, caption=f"Foto {i+1}", use_container_width=True)
+                    st.image(img, caption=f"Foto {i+1}", width='stretch')
         
         if st.button("⬅️ Ganti Template"):
             st.session_state.step = 'template_select'
@@ -434,7 +443,7 @@ elif st.session_state.step == 'preview':
         
         # Add watermark
         watermarked = add_watermark(grid_image)
-        st.image(watermarked, caption="Preview (Watermarked)", use_container_width=True)
+        st.image(watermarked, caption="Preview (Watermarked)", width='stretch')
         
         col_retake, col_back = st.columns(2)
         with col_retake:
@@ -457,7 +466,7 @@ elif st.session_state.step == 'preview':
         st.info(f"Total Biaya: **Rp {PRICE_IDR:,}**")
         
         if st.session_state.payment_url is None:
-            if st.button("💳 Bayar via QRIS", type="primary", use_container_width=True):
+            if st.button("💳 Bayar via QRIS", type="primary", width='stretch'):
                 new_order_id = f"ORDER-{uuid.uuid4().hex[:8]}"
                 st.session_state.order_id = new_order_id
                 
@@ -470,11 +479,11 @@ elif st.session_state.step == 'preview':
             st.success("Order ID Terbuat!")
             st.code(st.session_state.order_id)
             
-            st.link_button("🔗 Buka Halaman Pembayaran (QRIS)", st.session_state.payment_url, use_container_width=True)
+            st.link_button("🔗 Buka Halaman Pembayaran (QRIS)", st.session_state.payment_url, use_container_width='stretch')
             st.caption("Scan QRIS pada link di atas, lalu klik tombol Cek Status.")
             
             st.markdown("---")
-            if st.button("✅ Cek Status Pembayaran", type="primary", use_container_width=True):
+            if st.button("✅ Cek Status Pembayaran", type="primary", width='stretch'):
                 with st.spinner("Memeriksa status pembayaran..."):
                     status = check_payment_status(st.session_state.order_id)
                     if status == 'success':
