@@ -1,9 +1,9 @@
 streamlit
 streamlit-webrtc
-midtrans-client
+midtransclient
 Pillow
 opencv-python-headless
 av
 numpy
-setuptools
-wheel
+aiortc
+aiohttp
