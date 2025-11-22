@@ -1,12 +1,11 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 import midtransclient
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 import av
 import numpy as np
 import uuid
-import time
 import io
 
 # --- KONFIGURASI & KONSTANTA ---
@@ -18,9 +17,8 @@ PRICE_IDR = 5000  # Harga foto
 st.set_page_config(page_title="Self-Service Photobooth", page_icon="📸")
 
 # --- STATE MANAGEMENT ---
-# Inisialisasi session state untuk menyimpan status aplikasi antar re-run
 if 'step' not in st.session_state:
-    st.session_state.step = 'capture' # capture, preview, paid
+    st.session_state.step = 'capture'
 if 'captured_image' not in st.session_state:
     st.session_state.captured_image = None
 if 'order_id' not in st.session_state:
@@ -40,22 +38,25 @@ def add_watermark(image_pil, text="UNPAID PREVIEW"):
     
     # Coba load default font, jika gagal pakai default bitmap
     try:
-        font = ImageFont.truetype("arial.ttf", 40)
+        font = ImageFont.truetype("arial.ttf", 60)
     except:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 60)
+        except:
+            font = ImageFont.load_default()
 
     # Gambar text watermark di tengah
-    text_bbox = draw.textbbox((0, 0), text, font=font)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_height = text_bbox[3] - text_bbox[1]
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
     
     x = (width - text_width) / 2
     y = (height - text_height) / 2
     
     # Warna merah semi-transparan
-    draw.text((x, y), text, fill=(255, 0, 0, 128), font=font)
+    draw.text((x, y), text, fill=(255, 0, 0, 180), font=font)
     
-    return Image.alpha_composite(watermarked, txt_layer)
+    return Image.alpha_composite(watermarked, txt_layer).convert("RGB")
 
 def convert_cv2_to_pil(cv2_img):
     """Konversi format OpenCV (BGR) ke Pillow (RGB)."""
@@ -103,8 +104,8 @@ def check_payment_status(order_id):
     
     try:
         status_response = core.transactions.status(order_id)
-        transaction_status = status_response['transaction_status']
-        fraud_status = status_response['fraud_status']
+        transaction_status = status_response.get('transaction_status', '')
+        fraud_status = status_response.get('fraud_status', '')
         
         # Logika settlement Midtrans
         if transaction_status == 'capture':
@@ -114,7 +115,7 @@ def check_payment_status(order_id):
                 return 'success'
         elif transaction_status == 'settlement':
             return 'success'
-        elif transaction_status == 'cancel' or transaction_status == 'deny' or transaction_status == 'expire':
+        elif transaction_status in ['cancel', 'deny', 'expire']:
             return 'failed'
         elif transaction_status == 'pending':
             return 'pending'
@@ -127,11 +128,12 @@ def check_payment_status(order_id):
 # --- CLASS: WEBRTC PROCESSOR ---
 class VideoTransformer(VideoTransformerBase):
     def __init__(self):
-        self.frame = None
+        self.last_frame = None
 
-    def recv(self, frame):
-        self.frame = frame
-        return frame
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        self.last_frame = img
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 # --- UI UTAMA ---
 st.title("📸 Photobooth Self-Service")
@@ -142,8 +144,10 @@ with st.sidebar:
     st.header("Debug Panel")
     st.write(f"Current Step: **{st.session_state.step}**")
     if st.button("Reset Aplikasi"):
-        for key in st.session_state.keys():
-            del st.session_state[key]
+        st.session_state.step = 'capture'
+        st.session_state.captured_image = None
+        st.session_state.order_id = None
+        st.session_state.payment_url = None
         st.rerun()
 
 # ===========================
@@ -156,15 +160,17 @@ if st.session_state.step == 'capture':
     ctx = webrtc_streamer(
         key="photobooth", 
         video_processor_factory=VideoTransformer,
+        mode=WebRtcMode.SENDRECV,
         rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-        media_stream_constraints={"video": True, "audio": False}
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True,
     )
 
-    if ctx.video_transformer:
+    if ctx.video_processor:
         if st.button("📸 Ambil Foto", type="primary", use_container_width=True):
-            if ctx.video_transformer.frame:
+            if hasattr(ctx.video_processor, 'last_frame') and ctx.video_processor.last_frame is not None:
                 # Ambil frame terakhir dari video stream
-                img = ctx.video_transformer.frame.to_ndarray(format="bgr24")
+                img = ctx.video_processor.last_frame
                 # Simpan ke session state
                 st.session_state.captured_image = convert_cv2_to_pil(img)
                 st.session_state.step = 'preview'
@@ -182,7 +188,7 @@ elif st.session_state.step == 'preview':
         st.subheader("Preview Foto")
         # Tampilkan foto dengan watermark
         watermarked_img = add_watermark(st.session_state.captured_image)
-        st.image(watermarked_img, caption="Preview (Watermarked)", use_column_width=True)
+        st.image(watermarked_img, caption="Preview (Watermarked)", use_container_width=True)
         
         if st.button("🔄 Foto Ulang"):
             st.session_state.step = 'capture'
@@ -199,33 +205,36 @@ elif st.session_state.step == 'preview':
                 new_order_id = f"ORDER-{uuid.uuid4().hex[:8]}"
                 st.session_state.order_id = new_order_id
                 
-                url = create_transaction(new_order_id, PRICE_IDR)
-                if url:
-                    st.session_state.payment_url = url
-                    st.rerun()
+                with st.spinner("Membuat transaksi..."):
+                    url = create_transaction(new_order_id, PRICE_IDR)
+                    if url:
+                        st.session_state.payment_url = url
+                        st.rerun()
         
         # Tampilkan Interface Pembayaran
         else:
             st.success("Order ID Terbuat!")
-            # Tampilkan tombol link ke Midtrans Snap (atau iframe)
+            st.code(st.session_state.order_id)
+            
+            # Tampilkan tombol link ke Midtrans Snap
             st.link_button("🔗 Buka Halaman Pembayaran (QRIS)", st.session_state.payment_url)
             
-            # Embed halaman pembayaran (Opsional, beberapa browser memblokir iframe payment)
             st.caption("Scan QRIS pada link di atas, lalu klik tombol Cek Status di bawah.")
             
             st.markdown("---")
             check_btn = st.button("✅ Cek Status Pembayaran", type="primary")
             
             if check_btn:
-                status = check_payment_status(st.session_state.order_id)
-                if status == 'success':
-                    st.balloons()
-                    st.session_state.step = 'paid'
-                    st.rerun()
-                elif status == 'pending':
-                    st.warning("Pembayaran belum terdeteksi. Silakan selesaikan pembayaran.")
-                else:
-                    st.error("Pembayaran Gagal atau Kadaluarsa.")
+                with st.spinner("Memeriksa status pembayaran..."):
+                    status = check_payment_status(st.session_state.order_id)
+                    if status == 'success':
+                        st.balloons()
+                        st.session_state.step = 'paid'
+                        st.rerun()
+                    elif status == 'pending':
+                        st.warning("Pembayaran belum terdeteksi. Silakan selesaikan pembayaran.")
+                    else:
+                        st.error("Pembayaran Gagal atau Kadaluarsa.")
 
 # ===========================
 # STEP 4: UNLOCK & DOWNLOAD
@@ -234,7 +243,7 @@ elif st.session_state.step == 'paid':
     st.subheader("🎉 Pembayaran Berhasil!")
     
     # Tampilkan foto asli (Original)
-    st.image(st.session_state.captured_image, caption="Hasil Foto Anda (Clean)", use_column_width=True)
+    st.image(st.session_state.captured_image, caption="Hasil Foto Anda (Clean)", use_container_width=True)
     
     # Siapkan buffer untuk download
     buf = io.BytesIO()
