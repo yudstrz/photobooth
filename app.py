@@ -11,8 +11,8 @@ import io
 
 # --- KONFIGURASI & KONSTANTA ---
 # GANTI DENGAN SERVER KEY & CLIENT KEY MIDTRANS SANDBOX ANDA
-MIDTRANS_SERVER_KEY = 'SB-Mid-server-xxxxxxxxxxxx'
-MIDTRANS_CLIENT_KEY = 'SB-Mid-client-xxxxxxxxxxxx'
+MIDTRANS_SERVER_KEY = 'Mid-server-FcYKPYk-LPZ348PE3inpCkrk'
+MIDTRANS_CLIENT_KEY = 'Mid-client-rawLodn_Eyclj7vW'
 PRICE_IDR = 5000  # Harga foto
 
 st.set_page_config(page_title="Self-Service Photobooth", page_icon="📸")
