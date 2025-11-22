@@ -182,6 +182,45 @@ def process_camera_image(uploaded_file):
         return image
     return None
 
+def camera_input_component():
+    """HTML5 Camera Component with mirror effect"""
+    html_code = """
+    <div style="text-align: center;">
+        <video id="video" width="640" height="480" autoplay style="transform: scaleX(-1); border: 2px solid #ddd; border-radius: 10px;"></video>
+        <br><br>
+        <button onclick="takePhoto()" style="padding: 15px 30px; font-size: 18px; background: #ff4b4b; color: white; border: none; border-radius: 5px; cursor: pointer;">📸 Ambil Foto</button>
+        <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+    </div>
+    
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+        
+        // Access camera
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(err => {
+                console.error("Error accessing camera:", err);
+            });
+        
+        function takePhoto() {
+            // Draw image normally first
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // Convert to base64 and send to Streamlit
+            const imageData = canvas.toDataURL('image/jpeg');
+            window.parent.postMessage({
+                type: 'streamlit:setComponentValue',
+                value: imageData
+            }, '*');
+        }
+    </script>
+    """
+    return components.html(html_code, height=600)
+
 # --- UTILS: PAYMENT MIDTRANS ---
 def create_transaction(order_id, amount):
     """Membuat transaksi SNAP Midtrans."""
@@ -242,17 +281,6 @@ def check_payment_status(order_id):
         return 'pending'
     except Exception as e:
         return 'pending'
-
-# --- CAMERA CSS FOR MIRROR EFFECT ---
-st.markdown("""
-<style>
-    /* Mirror effect for camera */
-    video {
-        transform: scaleX(-1);
-        -webkit-transform: scaleX(-1);
-    }
-</style>
-""", unsafe_allow_html=True)
 
 # --- UI UTAMA ---
 st.title("📸 Photobooth Self-Service")
@@ -337,29 +365,33 @@ elif st.session_state.step == 'capture':
         st.write(f"**Foto {current_count + 1} dari {total_needed}**")
         
         if current_count < total_needed:
-            st.info("📸 Tekan tombol capture pada kamera untuk mengambil foto")
+            st.info("📸 Klik tombol 'Ambil Foto' pada kamera di bawah")
             
-            # Camera input
-            camera_photo = st.camera_input(
-                f"Ambil Foto #{current_count + 1}", 
-                key=f"camera_{st.session_state.camera_key}"
-            )
+            # Display camera component
+            photo_data = camera_input_component()
             
-            if camera_photo is not None:
-                # Process and save image
-                processed_img = process_camera_image(camera_photo)
-                if processed_img:
-                    st.session_state.captured_images.append(processed_img)
-                    st.session_state.camera_key += 1  # Change key to reset camera
+            if photo_data:
+                try:
+                    # Decode base64 image
+                    import base64
+                    image_data = photo_data.split(',')[1]
+                    image_bytes = base64.b64decode(image_data)
+                    image = Image.open(io.BytesIO(image_bytes))
+                    
+                    # MIRROR: Flip horizontal untuk konsisten dengan preview
+                    image = image.transpose(Image.FLIP_LEFT_RIGHT)
+                    
+                    st.session_state.captured_images.append(image)
+                    st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
                     
                     if len(st.session_state.captured_images) >= total_needed:
                         st.session_state.step = 'preview'
-                    
-                    st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
-                    time.sleep(0.5)
-                    st.rerun()
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error memproses foto: {e}")
             
             if current_count > 0:
+                st.markdown("---")
                 if st.button("⏭️ Lanjut ke Preview", use_container_width=True):
                     st.session_state.step = 'preview'
                     st.rerun()
