@@ -1,13 +1,11 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode
 import midtransclient
 from PIL import Image, ImageDraw, ImageFont
-import cv2
-import av
 import numpy as np
 import uuid
 import io
-import time
+from datetime import datetime
+import streamlit.components.v1 as components
 
 # --- KONFIGURASI & KONSTANTA ---
 MIDTRANS_SERVER_KEY = 'Mid-server-FcYKPYk-LPZ348PE3inpCkrk'
@@ -88,6 +86,8 @@ if 'selected_template' not in st.session_state:
     st.session_state.selected_template = '2x2'
 if 'countdown' not in st.session_state:
     st.session_state.countdown = 0
+if 'camera_key' not in st.session_state:
+    st.session_state.camera_key = 0
 
 # --- UTILS: TEMPLATE PROCESSING ---
 def create_photobooth_grid(images, template_key):
@@ -173,6 +173,15 @@ def convert_cv2_to_pil(cv2_img):
     """Konversi format OpenCV (BGR) ke Pillow (RGB)."""
     return Image.fromarray(cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB))
 
+def process_camera_image(uploaded_file):
+    """Process image from camera input."""
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        # Flip horizontal untuk efek mirror
+        image = image.transpose(Image.FLIP_LEFT_RIGHT)
+        return image
+    return None
+
 # --- UTILS: PAYMENT MIDTRANS ---
 def create_transaction(order_id, amount):
     """Membuat transaksi SNAP Midtrans."""
@@ -234,16 +243,16 @@ def check_payment_status(order_id):
     except Exception as e:
         return 'pending'
 
-# --- CLASS: WEBRTC PROCESSOR ---
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.last_frame = None
-
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
-        img_flipped = cv2.flip(img, 1)
-        self.last_frame = img_flipped
-        return av.VideoFrame.from_ndarray(img_flipped, format="bgr24")
+# --- CAMERA CSS FOR MIRROR EFFECT ---
+st.markdown("""
+<style>
+    /* Mirror effect for camera */
+    video {
+        transform: scaleX(-1);
+        -webkit-transform: scaleX(-1);
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # --- UI UTAMA ---
 st.title("📸 Photobooth Self-Service")
@@ -328,43 +337,32 @@ elif st.session_state.step == 'capture':
         st.write(f"**Foto {current_count + 1} dari {total_needed}**")
         
         if current_count < total_needed:
-            # Setup WebRTC
-            ctx = webrtc_streamer(
-                key="photobooth", 
-                video_processor_factory=VideoTransformer,
-                mode=WebRtcMode.SENDRECV,
-                rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
-                media_stream_constraints={"video": True, "audio": False},
-                async_processing=True,
+            st.info("📸 Tekan tombol capture pada kamera untuk mengambil foto")
+            
+            # Camera input
+            camera_photo = st.camera_input(
+                f"Ambil Foto #{current_count + 1}", 
+                key=f"camera_{st.session_state.camera_key}"
             )
-
-            # Countdown display
-            if st.session_state.countdown > 0:
-                st.markdown(f"<h1 style='text-align: center; color: red; font-size: 100px;'>{st.session_state.countdown}</h1>", unsafe_allow_html=True)
-                time.sleep(1)
-                st.session_state.countdown -= 1
-                st.rerun()
-
-            col_capture, col_skip = st.columns(2)
             
-            with col_capture:
-                if st.button("📸 Ambil Foto", type="primary", use_container_width=True):
-                    if ctx.video_processor and hasattr(ctx.video_processor, 'last_frame') and ctx.video_processor.last_frame is not None:
-                        img = ctx.video_processor.last_frame
-                        pil_img = convert_cv2_to_pil(img)
-                        st.session_state.captured_images.append(pil_img)
-                        
-                        if len(st.session_state.captured_images) >= total_needed:
-                            st.session_state.step = 'preview'
-                        st.rerun()
-                    else:
-                        st.warning("Tunggu sampai kamera siap...")
-            
-            with col_skip:
-                if current_count > 0:
-                    if st.button("⏭️ Lanjut Preview", use_container_width=True):
+            if camera_photo is not None:
+                # Process and save image
+                processed_img = process_camera_image(camera_photo)
+                if processed_img:
+                    st.session_state.captured_images.append(processed_img)
+                    st.session_state.camera_key += 1  # Change key to reset camera
+                    
+                    if len(st.session_state.captured_images) >= total_needed:
                         st.session_state.step = 'preview'
-                        st.rerun()
+                    
+                    st.success(f"✅ Foto {len(st.session_state.captured_images)} berhasil diambil!")
+                    time.sleep(0.5)
+                    st.rerun()
+            
+            if current_count > 0:
+                if st.button("⏭️ Lanjut ke Preview", use_container_width=True):
+                    st.session_state.step = 'preview'
+                    st.rerun()
     
     with col2:
         st.write("**Tips Pose:**")
